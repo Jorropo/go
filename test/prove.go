@@ -7,7 +7,10 @@
 
 package main
 
-import "math"
+import (
+	"math"
+	"math/bits"
+)
 
 func f0(a []int) int {
 	a[0] = 1
@@ -1026,6 +1029,58 @@ func useInt(a int) {
 
 //go:noinline
 func useSlice(a []int) {
+}
+
+func mod64uWithSmallerDividendMax(a, b uint64, ensureBothBranchesCouldHappen bool) int {
+	a &= 0xff
+	b &= 0xfff
+
+	z := bits.Len64(a % b)
+
+	if ensureBothBranchesCouldHappen {
+		if z > bits.Len64(0xff) { // ERROR "Disproved Less64$"
+			return 42
+		}
+	} else {
+		if z <= bits.Len64(0xff) { // ERROR "Proved Leq64$"
+			return 1337
+		}
+	}
+	return z
+}
+func mod64uWithSmallerDivisorMax(a, b uint64, ensureBothBranchesCouldHappen bool) int {
+	a &= 0xfff
+	b &= 0x10 // we need bits.Len64(b.umax) != bits.Len64(b.umax-1)
+
+	z := bits.Len64(a % b)
+
+	if ensureBothBranchesCouldHappen {
+		if z > bits.Len64(0x10-1) { // ERROR "Disproved Less64$"
+			return 42
+		}
+	} else {
+		if z <= bits.Len64(0x10-1) { // ERROR "Proved Leq64$"
+			return 1337
+		}
+	}
+	return z
+}
+func mod64uWithIdenticalMax(a, b uint64, ensureBothBranchesCouldHappen bool) int {
+	a &= 0x10
+	b &= 0x10 // we need bits.Len64(b.umax) != bits.Len64(b.umax-1)
+
+	z := bits.Len64(a % b)
+
+	if ensureBothBranchesCouldHappen {
+		if z > bits.Len64(0x10-1) { // ERROR "Disproved Less64$"
+			return 42
+		}
+	} else {
+		if z <= bits.Len64(0x10-1) { // ERROR "Proved Leq64$"
+			return 1337
+		}
+	}
+	return z
 }
 
 func main() {
