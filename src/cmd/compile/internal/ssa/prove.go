@@ -1274,6 +1274,140 @@ func simplifyBlock(sdom SparseTree, ft *factsTable, b *Block) {
 		}
 	}
 
+	// Derive limits for operations based on their arguments.
+	// We process values in multiple passes to handle dependencies.
+	// Most dependencies should be resolved in 2-3 passes.
+	for pass := 0; pass < 3; pass++ {
+		changed := false
+		for _, v := range b.Values {
+			switch v.Op {
+			case OpAnd64:
+				// For a & mask with constant mask, result is in [0, mask]
+				if v.Args[1].Op == OpConst64 {
+					maskVal := uint64(v.Args[1].AuxInt)
+					old, hasLimit := ft.limits[v.ID]
+					if !hasLimit {
+						ft.limits[v.ID] = limit{
+							min:  0,
+							max:  int64(maskVal),
+							umin: 0,
+							umax: maskVal,
+						}
+						changed = true
+						if b.Func.pass.debug > 2 {
+							b.Func.Warnl(v.Pos, "Pass %d: Derived limits for AND v%d: sm,SM,um,UM=0,%d,0,%d", pass, v.ID, maskVal, maskVal)
+						}
+					} else if old.umax > maskVal {
+						ft.limits[v.ID] = limit{
+							min:  0,
+							max:  int64(maskVal),
+							umin: 0,
+							umax: maskVal,
+						}
+						changed = true
+						if b.Func.pass.debug > 2 {
+							b.Func.Warnl(v.Pos, "Pass %d: Updated limits for AND v%d: sm,SM,um,UM=0,%d,0,%d", pass, v.ID, maskVal, maskVal)
+						}
+					}
+				} else if v.Args[0].Op == OpConst64 {
+					maskVal := uint64(v.Args[0].AuxInt)
+					old, hasLimit := ft.limits[v.ID]
+					if !hasLimit {
+						ft.limits[v.ID] = limit{
+							min:  0,
+							max:  int64(maskVal),
+							umin: 0,
+							umax: maskVal,
+						}
+						changed = true
+						if b.Func.pass.debug > 2 {
+							b.Func.Warnl(v.Pos, "Pass %d: Derived limits for AND v%d: sm,SM,um,UM=0,%d,0,%d", pass, v.ID, maskVal, maskVal)
+						}
+					} else if old.umax > maskVal {
+						ft.limits[v.ID] = limit{
+							min:  0,
+							max:  int64(maskVal),
+							umin: 0,
+							umax: maskVal,
+						}
+						changed = true
+						if b.Func.pass.debug > 2 {
+							b.Func.Warnl(v.Pos, "Pass %d: Updated limits for AND v%d: sm,SM,um,UM=0,%d,0,%d", pass, v.ID, maskVal, maskVal)
+						}
+					}
+				}
+			case OpMod64u:
+				// For a % b, result is in [0, min(a.umax, b.umax-1)]
+				limA, okA := ft.limits[v.Args[0].ID]
+				limB, okB := ft.limits[v.Args[1].ID]
+				if b.Func.pass.debug > 2 {
+					b.Func.Warnl(v.Pos, "Pass %d: MOD v%d: checking args v%d (okA=%v, umax=%d) and v%d (okB=%v, umax=%d)",
+						pass, v.ID, v.Args[0].ID, okA, limA.umax, v.Args[1].ID, okB, limB.umax)
+				}
+				if okA || okB {
+					old, hasLimit := ft.limits[v.ID]
+					umax := uint64(math.MaxUint64)
+					if okA && limA.umax < umax {
+						umax = limA.umax
+					}
+					if okB && limB.umax > 0 && limB.umax-1 < umax {
+						umax = limB.umax - 1
+					}
+					if umax != math.MaxUint64 {
+						max := int64(math.MaxInt64)
+						if umax <= uint64(math.MaxInt64) {
+							max = int64(umax)
+						}
+						newLim := limit{
+							min:  0,
+							max:  max,
+							umin: 0,
+							umax: umax,
+						}
+						if !hasLimit || old.umax != newLim.umax {
+							ft.limits[v.ID] = newLim
+							changed = true
+							if b.Func.pass.debug > 2 {
+								b.Func.Warnl(v.Pos, "Pass %d: Derived limits for MOD v%d: sm,SM,um,UM=0,%d,0,%d", pass, v.ID, max, umax)
+							}
+						}
+					}
+				}
+			case OpBitLen64:
+				// bits.Len64(x) returns bits needed for x
+				// If x in [0, 2^n-1], result is in [0, n]
+				limX, okX := ft.limits[v.Args[0].ID]
+				if okX {
+					old, hasLimit := ft.limits[v.ID]
+					// Compute bits.Len64(limX.umax)
+					var bitLen int64
+					umax := limX.umax
+					for umax > 0 {
+						bitLen++
+						umax >>= 1
+					}
+					newLim := limit{
+						min:  0,
+						max:  bitLen,
+						umin: 0,
+						umax: uint64(bitLen),
+					}
+					if !hasLimit || old.umax != newLim.umax {
+						ft.limits[v.ID] = newLim
+						changed = true
+						if b.Func.pass.debug > 2 {
+							b.Func.Warnl(v.Pos, "Pass %d: Derived limits for BitLen64 v%d (arg v%d umax=%d): sm,SM,um,UM=0,%d,0,%d",
+								pass, v.ID, v.Args[0].ID, limX.umax, bitLen, bitLen)
+						}
+					}
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+
 	if b.Kind != BlockIf {
 		return
 	}
